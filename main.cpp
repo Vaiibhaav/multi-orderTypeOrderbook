@@ -5,6 +5,7 @@
 #include "ThreadSafeQueue.h"
 #include "OrderAction.h"
 #include <mutex>
+#include "MatchingEngine.h"
 
 std::mutex printMutex;
 
@@ -15,31 +16,38 @@ int main(){
     // ─── Consumer thread ───
     // Runs in background, keeps popping until Shutdown() is called
     std::thread consumer([&queue, &consumed](){
-        OrderAction action;
-        while(queue.Pop(action)){
-            // Pop returned true → we got an item
-            consumed++;
+        MatchingEngine engine;
+        bool useBatch = true; // Toggle this flag to switch between batch and one-by-one
 
-            // Let's print what we got (just to see it working)
-            if(std::holds_alternative<AddAction>(action)){
-                const auto& add = std::get<AddAction>(action);
-                std::lock_guard<std::mutex> printLock(printMutex);
-                std::cout << "[Consumer] Got AddAction: id=" << add.orderId
-                          << " side=" << (add.side == Side::Buy ? "Buy" : "Sell")
-                          << " price=" << add.price
-                          << " qty=" << add.quantity << "\n";
+        if (useBatch) {
+            std::vector<OrderAction> batch;
+            const std::size_t MAX_BATCH_SIZE = 10;
+            
+            while(true) {
+                batch.clear(); // Clear the batch for the next iteration
+                std::size_t popped = queue.PopBatch(batch, MAX_BATCH_SIZE);
+                
+                if (popped == 0) {
+                    // PopBatch returns 0 only when shutdown AND empty
+                    break;
+                }
+                
+                consumed += popped;
+                // Pass the entire batch to the matching engine
+                engine.ProcessBatch(batch);
             }
-            else if(std::holds_alternative<CancelAction>(action)){
-                const auto& cancel = std::get<CancelAction>(action);
-                std::lock_guard<std::mutex> printLock(printMutex);
-                std::cout << "[Consumer] Got CancelAction: id=" << cancel.orderId << "\n";
+        } else {
+            OrderAction action;
+            while(queue.Pop(action)){
+                consumed++;
+                // Pass the single action to the matching engine
+                engine.ProcessAction(action);
             }
         }
-        // Pop returned false → shutdown was called and queue is empty
-        {
-            std::lock_guard<std::mutex> printLock(printMutex);
-            std::cout << "[Consumer] Shutting down.\n";
-        }
+        
+        std::lock_guard<std::mutex> printLock(printMutex);
+        std::cout << "[Consumer] Shutting down. Final Orderbook size: " 
+                  << engine.GetOrderbook().Size() << "\n";
     });
 
     // ─── Producer threads ───
@@ -54,7 +62,7 @@ int main(){
                 // Each producer uses a unique ID range: t*10000 + i
                 OrderId id = t * 4 + i;
                 Side side = (i % 2 == 0) ? Side::Buy : Side::Sell;
-                Price price = 100 + (i % 10) - 5;  // prices 95-104
+                Price price = 100;  // prices 95-104
 
                 queue.Push(AddAction{
                     OrderType::GoodTillCancel, id, side, price, 10
