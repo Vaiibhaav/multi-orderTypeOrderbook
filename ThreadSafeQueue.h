@@ -1,21 +1,19 @@
 #pragma once
 #include <vector>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
 #include <cstddef>
 #include <stdexcept>
+#include <memory>
 
 template <typename T>
 class ThreadSafeQueue
 {
+    struct Slot {
+        T item;
+        std::atomic<bool> ready{false};
+    };
+
 public:
-    // capacity should be a power of two
-    // Slow:  index % capacity
-    // Fast:  index & (capacity - 1)    // only works when capacity is power of 2
-    // Example: capacity = 8 (binary: 1000), capacity-1 = 7 (binary: 0111)
-    // 10 % 8 = 2
-    // 10 & 7 = 1010 & 0111 = 0010 = 2  ✓
     explicit ThreadSafeQueue(std::size_t capacity = 65536)
     {
         if (!(capacity > 0 && (capacity & (capacity - 1)) == 0)) {
@@ -23,86 +21,119 @@ public:
         }
         capacity_ = capacity;
         mask_ = capacity - 1;
-        buffer_.resize(capacity);
+        buffer_ = std::make_unique<Slot[]>(capacity);
     }
 
     bool Push(const T& item)
     {
-        std::unique_lock<std::mutex> lock(mutex_);
-        while(!shutdown_.load() && count_ >= capacity_){
-            notFull_.wait(lock);
+        std::size_t current_tail = tail_.load(std::memory_order_relaxed);
+        while (true) {
+            if (shutdown_.load(std::memory_order_relaxed)) return false;
+            
+            std::size_t current_head = head_.load(std::memory_order_acquire);
+            if (current_tail - current_head >= capacity_) {
+                // Queue is full, busy wait
+                current_tail = tail_.load(std::memory_order_relaxed);
+                continue;
+            }
+            
+            // Try to claim this slot using CAS
+            if (tail_.compare_exchange_weak(current_tail, current_tail + 1, std::memory_order_relaxed)) {
+                break;
+            }
         }
-        if(shutdown_.load()){ return false; }
-        buffer_[tail_ & mask_] = item;
-        tail_ = (tail_ + 1) & mask_;
-        count_++;
-        notEmpty_.notify_one();
+
+        Slot& slot = buffer_[current_tail & mask_];
+        slot.item = item;
+        // Release memory order ensures the item copy is visible before ready=true
+        slot.ready.store(true, std::memory_order_release);
         return true;
     }
 
     bool Pop(T& item)
     {
-        std::unique_lock<std::mutex> lock(mutex_);
-        while(!shutdown_.load() && count_ == 0){
-            notEmpty_.wait(lock);
+        std::size_t current_head = head_.load(std::memory_order_relaxed);
+        while (true) {
+            Slot& slot = buffer_[current_head & mask_];
+            if (slot.ready.load(std::memory_order_acquire)) {
+                item = slot.item;
+                slot.ready.store(false, std::memory_order_relaxed);
+                head_.store(current_head + 1, std::memory_order_release);
+                return true;
+            }
+            
+            // Slot is not ready yet. 
+            // Are we empty or just waiting for a producer to finish writing?
+            if (current_head == tail_.load(std::memory_order_acquire)) {
+                if (shutdown_.load(std::memory_order_acquire)) {
+                    // Double check in case a producer pushed right before shutdown
+                    if (current_head == tail_.load(std::memory_order_acquire)) {
+                        return false; 
+                    }
+                }
+            }
+            // Busy wait (spin)
         }
-        // Only return false if shutdown AND queue is empty (fully drained)
-        if(shutdown_.load() && count_ == 0){ return false; }
-        item = buffer_[head_ & mask_];
-        head_ = (head_ + 1) & mask_;
-        count_--;
-        notFull_.notify_one();
-        return true;
     }
 
     std::size_t PopBatch(std::vector<T>& batch, std::size_t maxBatch)
     {
-        std::unique_lock<std::mutex> lock(mutex_);
-        while(!shutdown_.load() && count_ == 0){
-            notEmpty_.wait(lock);
-        }
-        // Only return 0 if shutdown AND queue is empty (fully drained)
-        if(shutdown_.load() && count_ == 0){ return 0; }
+        std::size_t current_head = head_.load(std::memory_order_relaxed);
         std::size_t popped = 0;
-        while(count_ > 0 && popped < maxBatch){
-            batch.push_back(buffer_[head_ & mask_]);
-            head_ = (head_ + 1) & mask_;
-            count_--;
-            popped++;
+        
+        while (popped == 0) {
+            while (popped < maxBatch) {
+                Slot& slot = buffer_[(current_head + popped) & mask_];
+                if (slot.ready.load(std::memory_order_acquire)) {
+                    batch.push_back(slot.item);
+                    slot.ready.store(false, std::memory_order_relaxed);
+                    popped++;
+                } else {
+                    break; // No more items ready at this exact moment
+                }
+            }
+            
+            if (popped > 0) {
+                head_.store(current_head + popped, std::memory_order_release);
+                return popped;
+            }
+            
+            if (current_head == tail_.load(std::memory_order_acquire)) {
+                if (shutdown_.load(std::memory_order_acquire)) {
+                    if (current_head == tail_.load(std::memory_order_acquire)) {
+                        return 0;
+                    }
+                }
+            }
+            // Busy wait (spin)
         }
-        notFull_.notify_all();
         return popped;
     }
 
     void Shutdown()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        shutdown_.store(true);
-        notEmpty_.notify_all();
-        notFull_.notify_all();
+        shutdown_.store(true, std::memory_order_release);
     }
 
     std::size_t Size() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return count_;
+        std::size_t t = tail_.load(std::memory_order_acquire);
+        std::size_t h = head_.load(std::memory_order_acquire);
+        return (t > h) ? (t - h) : 0;
     }
 
     bool Empty() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return count_ == 0;
+        return Size() == 0;
     }
 
 private:
-    std::vector<T> buffer_;              // The fixed-size ring
-    std::size_t capacity_;               // Always power of 2
-    std::size_t mask_;                   // capacity_ - 1, for fast modulo
-    std::size_t head_ = 0;              // Read position
-    std::size_t tail_ = 0;              // Write position
-    std::size_t count_ = 0;             // Current number of items
-    mutable std::mutex mutex_;
-    std::condition_variable notEmpty_;    // Consumer waits on this
-    std::condition_variable notFull_;     // Producer waits on this
-    std::atomic<bool> shutdown_{false};
+    std::unique_ptr<Slot[]> buffer_;
+    std::size_t capacity_;
+    std::size_t mask_;
+    
+    // Prevent false sharing by aligning to 64 bytes (cache line size)
+    alignas(64) std::atomic<std::size_t> head_{0};
+    alignas(64) std::atomic<std::size_t> tail_{0};
+    alignas(64) std::atomic<bool> shutdown_{false};
 };
