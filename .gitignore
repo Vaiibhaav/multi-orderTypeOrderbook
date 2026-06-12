@@ -3,3 +3,4 @@
 *.obj
 .vscode/
 *.md
+!README.md
