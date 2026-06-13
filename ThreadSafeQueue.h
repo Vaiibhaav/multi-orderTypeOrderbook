@@ -22,6 +22,13 @@ public:
         capacity_ = capacity;
         mask_ = capacity - 1;
         buffer_ = std::make_unique<Slot[]>(capacity);
+        //This tells make_unique what type of data we want to allocate.
+        //Normally, you might see std::make_unique<Slot>() to create exactly one Slot object.
+        //By adding the empty brackets [], we are telling C++ to allocate a C-style array of Slots.
+        /*Why didn't we just use std::vector<Slot>?
+        //Earlier, we tried to use std::vector to hold our slots. However, our Slot struct contains a std::atomic<bool>. By design in C++, std::atomic variables cannot be copied or moved. 
+        //When you tell a std::vector to resize itself (e.g., buffer_.resize(capacity)), the vector requires the items inside it to be copyable or movable just in case it needs to shuffle memory around. Because our Slot cannot be copied, the compiler threw a massive error.
+        //The Solution: std::unique_ptr<Slot[]> gives us the exact same thing as a vector—a dynamic, contiguous array of memory—but without the strict copying requirements and overhead of the std::vector class. It simply allocates the memory chunk once, default-initializes the atomic booleans inside it, and leaves it alone. It's faster, leaner, and perfect for low-latency code!*/
     }
 
     bool Push(const T& item)
@@ -37,7 +44,7 @@ public:
                 continue;
             }
             
-            // Try to claim this slot using CAS
+            // Try to claim this slot using CAS compare and swap
             if (tail_.compare_exchange_weak(current_tail, current_tail + 1, std::memory_order_relaxed)) {
                 break;
             }
