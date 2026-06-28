@@ -28,7 +28,7 @@ This project now proves a practical path from legacy finance protocols to modern
 - enables AI models to interact with the engine through MCP
 - supports realistic multi-agent trading simulations
 
-## Known Issues & Future Optimizations (HFT Roadmap)
+## Known Issues & Future Optimizations
 
 While this engine successfully demonstrates concurrent execution and lock-free queueing, there are two intentional architectural compromises made for simplicity that would need to be addressed before deployment in a true ultra-low-latency High Frequency Trading (HFT) environment:
 
