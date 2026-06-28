@@ -49,6 +49,21 @@ Trades Orderbook::MatchOrders(){
                 TradeInfo{bid->GetOrderId(),bid->GetPrice(),quantity},
                 TradeInfo{ask->GetOrderId(),ask->GetPrice(),quantity}
             });
+
+            {
+                uint64_t tsMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                if (tradeHistory_.size() >= MAX_TRADE_HISTORY) {
+                    tradeHistory_.pop_front();
+                }
+                tradeHistory_.push_back(TradeRecord{
+                    bid->GetOrderId(),
+                    ask->GetOrderId(),
+                    bid->GetPrice(),
+                    quantity,
+                    tsMs
+                });
+            }
         }
         if(bids.empty())
             bids_.erase(bidPrice);
@@ -141,4 +156,14 @@ OrderbookLevelInfo Orderbook::GetOrderInfo() const
             askInfos.push_back(CreateLevelInfos(price,orders));
         }
         return OrderbookLevelInfo{bidInfos,askInfos};
+}
+
+std::vector<TradeRecord> Orderbook::GetTradeHistory(std::size_t count) const {
+    std::vector<TradeRecord> result;
+    result.reserve(std::min(count, tradeHistory_.size()));
+    for (auto it = tradeHistory_.rbegin();
+         it != tradeHistory_.rend() && result.size() < count; ++it) {
+        result.push_back(*it);
+    }
+    return result;
 }

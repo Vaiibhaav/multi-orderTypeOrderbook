@@ -1,3 +1,4 @@
+#pragma once
 #include "Constants.h"
 #include "Side.h"
 #include "OrderType.h"

@@ -1,3 +1,4 @@
+#pragma once
 #include "LevelInfo.h"
 #include "Constants.h"
 
