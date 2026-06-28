@@ -50,7 +50,12 @@ From the repository root on Windows, run:
 ```
 
 This produces `orderbook_engine.dll` in the repository root.
+If you are using 64-bit Python, prefer the MSVC build script to produce a 64-bit DLL:
+```powershell
+.\build_dll_msvc.bat
+```
 
+`build_dll.bat` may produce a 32-bit DLL when the installed GCC toolchain is 32-bit.
 ### 2. Install the Python dependencies
 
 Navigate into the `mcp_server` folder and install requirements:
