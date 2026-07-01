@@ -138,7 +138,7 @@ std::string FIXCodec::encodeTradeHistory(const std::vector<TradeRecord>& records
             << ",\"ask_id\":" << r.askOrderId
             << ",\"price\":" << r.price
             << ",\"qty\":" << r.quantity
-            << ",\"ts\":" << r.timestampMs << "}";
+            << ",\"ts\":" << r.timestampms << "}";
         added++;
     }
     oss << "]}";

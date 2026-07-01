@@ -2,9 +2,9 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <mutex>
 #include "ThreadSafeQueue.h"
 #include "OrderAction.h"
-#include <mutex>
 #include "MatchingEngine.h"
 
 std::mutex printMutex;
@@ -46,8 +46,7 @@ int main(){
         }
         
         std::lock_guard<std::mutex> printLock(printMutex);
-        std::cout << "[Consumer] Shutting down. Final Orderbook size: " 
-                  << engine.GetOrderbook().Size() << "\n";
+        std::cout << "[Consumer] Shutting down. Final Orderbook size: " << engine.GetOrderbook().Size() << "\n";
     });
 
     // ─── Producer threads ───
@@ -63,14 +62,13 @@ int main(){
                 OrderId id = t * 4 + i;
                 Side side = (i % 2 == 0) ? Side::Buy : Side::Sell;
                 Price price = 100;  // prices 95-104
-
+                
                 queue.Push(AddAction{
                     OrderType::GoodTillCancel, id, side, price, 10
                 });
             }
             std::lock_guard<std::mutex> printLock(printMutex);
-            std::cout << "[Producer " << t << "] Done. Pushed " 
-                      << ORDERS_PER_PRODUCER << " orders.\n";
+            std::cout << "[Producer " << t << "] Done. Pushed "<< ORDERS_PER_PRODUCER << " orders.\n";
         });
     }
 

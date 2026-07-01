@@ -25,7 +25,7 @@ struct TradeRecord {
     OrderId  askOrderId;
     Price    price;
     Quantity quantity;
-    uint64_t timestampMs;
+    uint64_t timestamps;
 };
 
 class Orderbook{
@@ -36,7 +36,7 @@ private:
     };
     std::map<Price,OrderPointers,std::greater<Price>> bids_;
     std::map<Price,OrderPointers,std::less<Price>> asks_;
-    std::unordered_map<OrderId, OrderEntry> orders_;
+    std::unordered_map<OrderId, OrderEntry> orders_; //kind of like google serach for orders.
     
     static constexpr std::size_t MAX_TRADE_HISTORY = 1000;
     std::deque<TradeRecord> tradeHistory_;
