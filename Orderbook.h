@@ -25,7 +25,7 @@ struct TradeRecord {
     OrderId  askOrderId;
     Price    price;
     Quantity quantity;
-    uint64_t timestamps;
+    uint64_t timestampms;
 };
 
 class Orderbook{
